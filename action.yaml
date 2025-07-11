@@ -2,36 +2,316 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
-# actions-template
-name: "🛠️ Actions Template"
-description: "Description of action"
-# Any relevant notes/observations can go here
+# helm-chart-publish-action
+name: '☸️ Helm Chart Publisher'
+description: 'Publishes Helm Charts to an OCI container repository'
 
 inputs:
-  input:
-    description: "Description of input"
+  # Mandatory
+  username:
+    description: 'Username for the repository'
     required: true
+  password:
+    description: 'Password for the repository'
+    required: true
+  # Optional
+  registry:
+    description: 'Destination container registry'
+    required: false
+    # Defaults to Dockerhub when not specified
+    default: 'docker.io'
+  organisation:
+    description: 'Organization/namespace in the container registry'
+    required: false
+    # Defaults to the GitHub repository owner when not specified
+    default: "${{ github.repository_owner }}"
+  charts_path:
+    description: 'Path to the Helm charts directory'
+    required: false
+    default: './chartstorage'
+  permit_fail:
+    description: 'Allow action to fail without failing the workflow'
+    required: false
+    default: 'false'
+    # This is a boolean input, but GitHub Actions does not support
+    # boolean types directly. We treat it as a string and handle it
+    # in the action logic
+  show_charts:
+    description: 'Show/list published Helm charts in registry after publishing'
+    required: false
+    default: 'false'
+    # This is a boolean input, but GitHub Actions does not support
+    # boolean types directly. We treat it as a string and handle it
+    # in the action logic
 
 outputs:
-  output:
-    description: "Description of output"
-    value: ${{ steps.code.outputs.output }}
+  published_files:
+    description: 'List of successfully published files'
+    value: "${{ steps.publish.outputs.published_files }}"
+  publication_count:
+    description: 'Number of files successfully published'
+    value: "${{ steps.publish.outputs.publication_count }}"
+  failed_count:
+    description: 'Number of files that failed to publish'
+    value: "${{ steps.publish.outputs.failed_count }}"
+  failed_files:
+    description: 'List of files that failed to publish'
+    value: "${{ steps.publish.outputs.failed_files }}"
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
-    - name: "Friendly Name"
-      id: code
+    - name: 'Validate action inputs'
+      id: validate
       shell: bash
       run: |
-        # Friendly Name
-        input="${{ inputs.input }}"
-        if [ -z "$input" ]; then
-          echo "Error: mandatory input was not set/configured ❌"
+        # Validate action inputs
+        echo 'Validating inputs...'
+
+        # Define required inputs
+        required_inputs=("username" "password" "charts_path")
+
+        # Check required inputs
+        for input in "${required_inputs[@]}"; do
+          case "$input" in
+            "username")
+              if [ -z "${{ inputs.username }}" ]; then
+                echo 'Error: username is required ❌'
+                exit 1
+              fi
+              ;;
+            "password")
+              if [ -z "${{ inputs.password }}" ]; then
+                echo 'Error: password is required ❌'
+                exit 1
+              fi
+              ;;
+            "charts_path")
+              if [ ! -d "${{ inputs.charts_path }}" ]; then
+                echo "Error: charts_path invalid '${{ inputs.charts_path }}' ❌"
+                exit 1
+              fi
+              ;;
+          esac
+        done
+
+        echo 'All required inputs validated ✅'
+
+        # Check for helm command
+        if ! command -v helm >/dev/null 2>&1; then
+          echo 'Error: helm command not found in PATH ❌'
           exit 1
         fi
+        # Output helm version
+        helm_version=$(helm version --short 2>/dev/null)
+        echo "Helm version: $helm_version"
+        # Check for minimum version 3.7.0 (OCI support built-in)
+        min_version=3.7.0
+        current_version=$(helm version --short | \
+          sed -E 's/v([0-9.]+).*/\1/')
+        if [ -z "$current_version" ]; then
+          echo 'Error: Could not determine Helm version ❌'
+          exit 1
+        fi
+        # Fail if current_version is less than min_version
+        if [ "$(printf '%s\n' "$min_version" "$current_version" |\
+          sort -V | head -n1)" = "$min_version" ]; then
+          :  # OK
+        else
+          echo "Error: Helm version $min_version or higher required ❌"
+          exit 1
+        fi
+        echo 'Helm push and OCI registries supported ✅'
+        echo "Organization/Namespace: ${{ inputs.organisation }}"
 
-        echo "output=$input" >> "$GITHUB_ENV"
-        echo "output=$input" >> "$GITHUB_OUTPUT"
-        echo "Action received: $input ✅"
-        echo "Action received: $input ✅" >> "$GITHUB_STEP_SUMMARY"
+    # yamllint disable-line rule:line-length
+    - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+      with:
+        registry: "${{ inputs.registry }}"
+        username: "${{ inputs.username }}"
+        password: "${{ inputs.password }}"
+
+    - name: 'Publish Helm Charts'
+      id: publish
+      shell: bash
+      # yamllint disable rule:line-length
+      run: |
+        # Package and push helm charts to DockerHub
+
+        set -euo pipefail
+
+        PERMIT_FAIL=$(echo "${{ inputs.permit_fail }}" | \
+          tr '[:upper:]' '[:lower:]')
+
+        # Initialize variables for tracking publications
+        published_files=""
+        failed_files=""
+        publication_count=0
+        failed_count=0
+
+        echo "Publishing Helm Charts to registry: ${{ inputs.registry }} ☸️"
+
+        shopt -s nullglob  # Since we specify bash as shell, this is fine
+        # Use find to handle spaces in filenames robustly
+        chart_files_found=$(find "${{ inputs.charts_path }}" \
+          -maxdepth 1 -name '*.tgz' | wc -l)
+
+        if [ "$chart_files_found" -eq 0 ]; then
+          echo "Warning: no files found matching pattern *.tgz ⚠️"
+          echo "Path: ${{ inputs.charts_path }}"
+          echo 'publication_count=0' >> "$GITHUB_OUTPUT"
+          echo 'failed_count=0' >> "$GITHUB_OUTPUT"
+          echo 'published_files=' >> "$GITHUB_OUTPUT"
+          echo 'failed_files=' >> "$GITHUB_OUTPUT"
+          echo '## ☸️ Helm Chart Publisher' >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Container registry:** ${{ inputs.registry }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Organization:** ${{ inputs.organisation }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Charts path:** ${{ inputs.charts_path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '- **Total files published:** 0' >> "$GITHUB_STEP_SUMMARY"
+          echo '- **Failed uploads:** 0' >> "$GITHUB_STEP_SUMMARY"
+          echo '### No files found to publish ⚠️' >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        echo '🚀 Starting Helm Chart Publishing'
+        echo '📋 Configuration:'
+        echo "   Container registry: ${{ inputs.registry }}"
+        echo "   Organization: ${{ inputs.organisation }}"
+        echo "   Charts path: ${{ inputs.charts_path }}"
+
+        # Collect chart files into an array to avoid subshell variable scoping issues
+        readarray -d '' target_files < <(find "${{ inputs.charts_path }}" -maxdepth 1 -name '*.tgz' -print0)
+
+        # Process each chart file
+        for file in "${target_files[@]}"; do
+          echo "Publishing chart file: $file"
+          # Extract chart name (repo) using helm show chart
+          chart_repo=$(helm show chart "$file" 2>/dev/null | \
+            awk -F': ' '/^name:/ {print $2}' | head -n1)
+          if [ -z "$chart_repo" ]; then
+            echo "Failed to extract chart name from $file ❌"
+            filename=$(basename "$file")
+            if [ -z "$failed_files" ]; then
+              failed_files="$filename"
+            else
+              failed_files="$failed_files,$filename"
+            fi
+            failed_count=$((failed_count + 1))
+            continue
+          fi
+
+          set +e  # Don't exit on individual helm push failure, process all
+          # Push the chart to the registry using the org as repo namespace
+          if helm push "$file" \
+            "oci://${{ inputs.registry }}/${{ inputs.organisation }}/${chart_repo}"
+          then
+            echo "Successfully published: $file ✅"
+            filename=$(basename "$file")
+            if [ -z "$published_files" ]; then
+              published_files="$filename"
+            else
+              published_files="$published_files,$filename"
+            fi
+            publication_count=$((publication_count + 1))
+          else
+            echo "Failed to publish: $file ❌"
+            filename=$(basename "$file")
+            if [ -z "$failed_files" ]; then
+              failed_files="$filename"
+            else
+              failed_files="$failed_files,$filename"
+            fi
+            failed_count=$((failed_count + 1))
+          fi
+          set -e  # Re-enable exit on error
+        done
+
+        echo '📊 Publication Summary:'
+        echo "  - Total files processed: $((publication_count + failed_count))"
+        echo "  - Successfully published: $publication_count"
+        echo "  - Failed uploads: $failed_count"
+        echo "  - Published files: $published_files"
+        if [ "$failed_count" -gt 0 ]; then
+          echo "  - Failed files: $failed_files"
+        fi
+
+        # Set outputs
+        echo "published_files=$published_files" >> "$GITHUB_OUTPUT"
+        echo "publication_count=$publication_count" >> "$GITHUB_OUTPUT"
+        echo "failed_count=$failed_count" >> "$GITHUB_OUTPUT"
+        echo "failed_files=$failed_files" >> "$GITHUB_OUTPUT"
+
+        # Add to step summary
+        echo '## ☸️ Helm Chart Publisher' >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Container registry:** ${{ inputs.registry }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Organization:** ${{ inputs.organisation }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Charts path:** ${{ inputs.charts_path }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Total files published:** $publication_count" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Failed uploads:** $failed_count" >> "$GITHUB_STEP_SUMMARY"
+        if [ "$publication_count" -gt 0 ]; then
+          echo "- **Published files:** $published_files" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$failed_count" -gt 0 ]; then
+          echo "- **Failed files:** $failed_files" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        # Handle failures and success messaging
+        if [ "$failed_count" -gt 0 ] && \
+           [ "f$PERMIT_FAIL" = 'ftrue' ]; then
+          echo 'Some uploads failed; for details check job output ⚠️' \
+            >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$failed_count" -gt 0 ] && \
+             [ "f$PERMIT_FAIL" != 'ftrue' ]; then
+          echo 'Some uploads failed; for details check job output ❌' \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo 'Action failed due to publishing errors ❌'
+          exit 1
+        else
+          echo "### All content published successfully 🎉" \
+            >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: 'Show/list Helm Charts in Registry [Optional]'
+      if: ${{ inputs.show_charts == 'true' }}
+      shell: bash
+      run: |
+        # Show/list Helm Charts in Registry
+
+        # Wait for registry to propagate changes
+        echo 'Waiting for registry to propagate changes... ⏳'
+        sleep 60
+
+        echo "Listing published Helm Charts in registry: ${{ inputs.registry }} 📋"
+
+        # Get the list of successfully published charts from previous step
+        if [ -n "${{ steps.publish.outputs.published_files }}" ]; then
+          # Parse comma-separated list of published files
+          IFS=',' read -ra PUBLISHED_ARRAY <<< "${{ steps.publish.outputs.published_files }}"
+          for filename in "${PUBLISHED_ARRAY[@]}"; do
+            if [ -n "$filename" ]; then
+              # Find the full path to extract chart name
+              full_path=$(find "${{ inputs.charts_path }}" -name "$filename" -type f | head -n1)
+              if [ -n "$full_path" ]; then
+                chart_repo=$(helm show chart "$full_path" 2>/dev/null | \
+                  awk -F': ' '/^name:/ {print $2}' | head -n1)
+                if [ -n "$chart_repo" ]; then
+                  echo "📦 Checking chart: $chart_repo"
+                  # Try to show the chart information from the registry
+                  set +e  # Don't exit on error for individual chart queries
+                  if helm show chart \
+                    "oci://${{ inputs.registry }}/${{ inputs.organisation }}/${chart_repo}" \
+                    2>/dev/null; then
+                    echo "✅ Chart $chart_repo is available in registry"
+                  else
+                    echo "⚠️  Could not retrieve chart $chart_repo from registry" \
+                      '(may take time to propagate)'
+                  fi
+                  set -e
+                  echo '---'
+                fi
+              fi
+            fi
+          done
+        else
+          echo 'No charts were successfully published ⚠️'
+        fi
