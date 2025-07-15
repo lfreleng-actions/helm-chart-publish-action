@@ -63,7 +63,6 @@ environment setup tasks before invoking the action; below is an example:
 | organisation | False    | `${{ github.repository_owner }}` | Organization/namespace in the container registry        |
 | charts_path  | False    | `./chartstorage`                 | Path to the Helm charts directory                       |
 | permit_fail  | False    | `false`                          | Allow action to fail without failing the workflow       |
-| show_charts  | False    | `false`                          | Show/list published Helm charts in registry after push  |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -92,8 +91,6 @@ This action performs the following steps:
    provided credentials
 3. **Publishing**: Packages and pushes Helm chart files (.tgz) from the
    specified charts directory to the OCI registry
-4. **Optional Listing**: When `show_charts` enabled, lists published charts
-   in the registry after a propagation delay
 
 The action searches for `.tgz` files in the specified charts directory and
 publishes each chart to the registry using the format:
