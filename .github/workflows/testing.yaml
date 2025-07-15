@@ -99,7 +99,6 @@ jobs:
           username: "${{ github.actor }}"
           password: "${{ github.token }}"
           charts_path: "${{ needs.build.outputs.charts_build_dir }}"
-          show_charts: 'true'
 
   dockerhub-publish:
     name: 'Publish [DockerHub]'
@@ -132,5 +131,4 @@ jobs:
           username: "${{ vars.DOCKERHUB_USERNAME }}"
           password: "${{ secrets.DOCKERHUB_PASSWORD }}"
           charts_path: "${{ needs.build.outputs.charts_build_dir }}"
-          show_charts: 'true'
           organisation: 'oransc'

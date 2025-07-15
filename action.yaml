@@ -36,13 +36,6 @@ inputs:
     # This is a boolean input, but GitHub Actions does not support
     # boolean types directly. We treat it as a string and handle it
     # in the action logic
-  show_charts:
-    description: 'Show/list published Helm charts in registry after publishing'
-    required: false
-    default: 'false'
-    # This is a boolean input, but GitHub Actions does not support
-    # boolean types directly. We treat it as a string and handle it
-    # in the action logic
 
 outputs:
   published_files:
@@ -269,49 +262,4 @@ runs:
         else
           echo "### All content published successfully 🎉" \
             >> "$GITHUB_STEP_SUMMARY"
-        fi
-
-    - name: 'Show/list Helm Charts in Registry [Optional]'
-      if: ${{ inputs.show_charts == 'true' }}
-      shell: bash
-      run: |
-        # Show/list Helm Charts in Registry
-
-        # Wait for registry to propagate changes
-        echo 'Waiting for registry to propagate changes... ⏳'
-        sleep 60
-
-        echo "Listing published Helm Charts in registry: ${{ inputs.registry }} 📋"
-
-        # Get the list of successfully published charts from previous step
-        if [ -n "${{ steps.publish.outputs.published_files }}" ]; then
-          # Parse comma-separated list of published files
-          IFS=',' read -ra PUBLISHED_ARRAY <<< "${{ steps.publish.outputs.published_files }}"
-          for filename in "${PUBLISHED_ARRAY[@]}"; do
-            if [ -n "$filename" ]; then
-              # Find the full path to extract chart name
-              full_path=$(find "${{ inputs.charts_path }}" -name "$filename" -type f | head -n1)
-              if [ -n "$full_path" ]; then
-                chart_repo=$(helm show chart "$full_path" 2>/dev/null | \
-                  awk -F': ' '/^name:/ {print $2}' | head -n1)
-                if [ -n "$chart_repo" ]; then
-                  echo "📦 Checking chart: $chart_repo"
-                  # Try to show the chart information from the registry
-                  set +e  # Don't exit on error for individual chart queries
-                  if helm show chart \
-                    "oci://${{ inputs.registry }}/${{ inputs.organisation }}/${chart_repo}" \
-                    2>/dev/null; then
-                    echo "✅ Chart $chart_repo is available in registry"
-                  else
-                    echo "⚠️  Could not retrieve chart $chart_repo from registry" \
-                      '(may take time to propagate)'
-                  fi
-                  set -e
-                  echo '---'
-                fi
-              fi
-            fi
-          done
-        else
-          echo 'No charts were successfully published ⚠️'
         fi
