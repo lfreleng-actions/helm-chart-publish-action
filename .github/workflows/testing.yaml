@@ -131,4 +131,4 @@ jobs:
           username: "${{ vars.DOCKERHUB_USERNAME }}"
           password: "${{ secrets.DOCKERHUB_PASSWORD }}"
           charts_path: "${{ needs.build.outputs.charts_build_dir }}"
-          organisation: 'oransc'
+          organisation: "${{ vars.DOCKERHUB_USERNAME }}"
