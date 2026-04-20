@@ -194,9 +194,12 @@ runs:
           fi
 
           set +e  # Don't exit on individual helm push failure, process all
-          # Push the chart to the registry using the org as repo namespace
+          # Push the chart to the registry; helm push appends the chart
+          # name (from Chart.yaml) to the target URL automatically, so
+          # the URL must stop at the organisation/namespace to avoid
+          # duplication (e.g. org/chart/chart)
           if helm push "$file" \
-            "oci://${{ inputs.registry }}/${{ inputs.organisation }}/${chart_repo}"
+            "oci://${{ inputs.registry }}/${{ inputs.organisation }}"
           then
             echo "Successfully published: $file ✅"
             filename=$(basename "$file")
