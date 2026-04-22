@@ -128,7 +128,11 @@ jobs:
       - uses: ./
         with:
           registry: 'docker.io'
-          username: "${{ vars.DOCKERHUB_USERNAME }}"
+          # Prefer canonical DOCKERHUB_USER; fall back to
+          # DOCKERHUB_USERNAME for backwards compatibility
+          # yamllint disable-line rule:line-length
+          username: "${{ vars.DOCKERHUB_USER || vars.DOCKERHUB_USERNAME }}"
           password: "${{ secrets.DOCKERHUB_PASSWORD }}"
           charts_path: "${{ needs.build.outputs.charts_build_dir }}"
-          organisation: "${{ vars.DOCKERHUB_USERNAME }}"
+          # yamllint disable-line rule:line-length
+          organisation: "${{ vars.DOCKERHUB_USER || vars.DOCKERHUB_USERNAME }}"
