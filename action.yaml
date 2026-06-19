@@ -68,20 +68,20 @@ runs:
         for input in "${required_inputs[@]}"; do
           case "$input" in
             "username")
-              if [ -z "${{ inputs.username }}" ]; then
+              if [ -z "${INPUTS_USERNAME}" ]; then
                 echo 'Error: username is required ❌'
                 exit 1
               fi
               ;;
             "password")
-              if [ -z "${{ inputs.password }}" ]; then
+              if [ -z "${INPUTS_PASSWORD}" ]; then
                 echo 'Error: password is required ❌'
                 exit 1
               fi
               ;;
             "charts_path")
-              if [ ! -d "${{ inputs.charts_path }}" ]; then
-                echo "Error: charts_path invalid '${{ inputs.charts_path }}' ❌"
+              if [ ! -d "${INPUTS_CHARTS_PATH}" ]; then
+                echo "Error: charts_path invalid '${INPUTS_CHARTS_PATH}' ❌"
                 exit 1
               fi
               ;;
@@ -115,7 +115,12 @@ runs:
           exit 1
         fi
         echo 'Helm push and OCI registries supported ✅'
-        echo "Organization/Namespace: ${{ inputs.organisation }}"
+        echo "Organization/Namespace: ${INPUTS_ORGANISATION}"
+      env:
+        INPUTS_USERNAME: ${{ inputs.username }}
+        INPUTS_PASSWORD: ${{ inputs.password }}
+        INPUTS_CHARTS_PATH: ${{ inputs.charts_path }}
+        INPUTS_ORGANISATION: ${{ inputs.organisation }}
 
     # yamllint disable-line rule:line-length
     - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -133,7 +138,7 @@ runs:
 
         set -euo pipefail
 
-        PERMIT_FAIL=$(echo "${{ inputs.permit_fail }}" | \
+        PERMIT_FAIL=$(printf '%s' "${INPUTS_PERMIT_FAIL}" | \
           tr '[:upper:]' '[:lower:]')
 
         # Initialize variables for tracking publications
@@ -142,24 +147,24 @@ runs:
         publication_count=0
         failed_count=0
 
-        echo "Publishing Helm Charts to registry: ${{ inputs.registry }} ☸️"
+        echo "Publishing Helm Charts to registry: ${INPUTS_REGISTRY} ☸️"
 
         shopt -s nullglob  # Since we specify bash as shell, this is fine
         # Use find to handle spaces in filenames robustly
-        chart_files_found=$(find "${{ inputs.charts_path }}" \
+        chart_files_found=$(find "${INPUTS_CHARTS_PATH}" \
           -maxdepth 1 -name '*.tgz' | wc -l)
 
         if [ "$chart_files_found" -eq 0 ]; then
           echo "Warning: no files found matching pattern *.tgz ⚠️"
-          echo "Path: ${{ inputs.charts_path }}"
+          echo "Path: ${INPUTS_CHARTS_PATH}"
           echo 'publication_count=0' >> "$GITHUB_OUTPUT"
           echo 'failed_count=0' >> "$GITHUB_OUTPUT"
           echo 'published_files=' >> "$GITHUB_OUTPUT"
           echo 'failed_files=' >> "$GITHUB_OUTPUT"
           echo '## ☸️ Helm Chart Publisher' >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Container registry:** ${{ inputs.registry }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Organization:** ${{ inputs.organisation }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Charts path:** ${{ inputs.charts_path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Container registry:** ${INPUTS_REGISTRY}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Organization:** ${INPUTS_ORGANISATION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Charts path:** ${INPUTS_CHARTS_PATH}" >> "$GITHUB_STEP_SUMMARY"
           echo '- **Total files published:** 0' >> "$GITHUB_STEP_SUMMARY"
           echo '- **Failed uploads:** 0' >> "$GITHUB_STEP_SUMMARY"
           echo '### No files found to publish ⚠️' >> "$GITHUB_STEP_SUMMARY"
@@ -168,12 +173,12 @@ runs:
 
         echo '🚀 Starting Helm Chart Publishing'
         echo '📋 Configuration:'
-        echo "   Container registry: ${{ inputs.registry }}"
-        echo "   Organization: ${{ inputs.organisation }}"
-        echo "   Charts path: ${{ inputs.charts_path }}"
+        echo "   Container registry: ${INPUTS_REGISTRY}"
+        echo "   Organization: ${INPUTS_ORGANISATION}"
+        echo "   Charts path: ${INPUTS_CHARTS_PATH}"
 
         # Collect chart files into an array to avoid subshell variable scoping issues
-        readarray -d '' target_files < <(find "${{ inputs.charts_path }}" -maxdepth 1 -name '*.tgz' -print0)
+        readarray -d '' target_files < <(find "${INPUTS_CHARTS_PATH}" -maxdepth 1 -name '*.tgz' -print0)
 
         # Process each chart file
         for file in "${target_files[@]}"; do
@@ -199,7 +204,7 @@ runs:
           # the URL must stop at the organisation/namespace to avoid
           # duplication (e.g. org/chart/chart)
           if helm push "$file" \
-            "oci://${{ inputs.registry }}/${{ inputs.organisation }}"
+            "oci://${INPUTS_REGISTRY}/${INPUTS_ORGANISATION}"
           then
             echo "Successfully published: $file ✅"
             filename=$(basename "$file")
@@ -239,9 +244,9 @@ runs:
 
         # Add to step summary
         echo '## ☸️ Helm Chart Publisher' >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Container registry:** ${{ inputs.registry }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Organization:** ${{ inputs.organisation }}" >> "$GITHUB_STEP_SUMMARY"
-        echo "- **Charts path:** ${{ inputs.charts_path }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Container registry:** ${INPUTS_REGISTRY}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Organization:** ${INPUTS_ORGANISATION}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Charts path:** ${INPUTS_CHARTS_PATH}" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Total files published:** $publication_count" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Failed uploads:** $failed_count" >> "$GITHUB_STEP_SUMMARY"
         if [ "$publication_count" -gt 0 ]; then
@@ -266,3 +271,8 @@ runs:
           echo "### All content published successfully 🎉" \
             >> "$GITHUB_STEP_SUMMARY"
         fi
+      env:
+        INPUTS_PERMIT_FAIL: ${{ inputs.permit_fail }}
+        INPUTS_REGISTRY: ${{ inputs.registry }}
+        INPUTS_CHARTS_PATH: ${{ inputs.charts_path }}
+        INPUTS_ORGANISATION: ${{ inputs.organisation }}
