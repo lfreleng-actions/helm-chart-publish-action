@@ -47,6 +47,8 @@ jobs:
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Setup Helm'
         # yamllint disable-line rule:line-length
@@ -74,7 +76,7 @@ jobs:
       - build
     permissions:
       contents: read
-      packages: write
+      packages: write  # Publish the chart package to GitHub Packages
     timeout-minutes: 3
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
@@ -85,6 +87,8 @@ jobs:
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Download Helm Charts'
         # yamllint disable-line rule:line-length
@@ -105,6 +109,10 @@ jobs:
     runs-on: 'ubuntu-latest'
     needs:
       - build
+    # Run this job in a dedicated environment so its execution and any
+    # environment-scoped secrets can be gated by environment protection
+    # rules (satisfies zizmor's secrets-outside-env).
+    environment: 'development'
     permissions:
       contents: read
     timeout-minutes: 3
@@ -117,6 +125,8 @@ jobs:
 
       # yamllint disable-line rule:line-length
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Download Helm Charts'
         # yamllint disable-line rule:line-length
