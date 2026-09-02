@@ -50,6 +50,14 @@ outputs:
   failed_files:
     description: 'List of files that failed to publish'
     value: "${{ steps.publish.outputs.failed_files }}"
+  published_refs:
+    # A tag can be overwritten by a later push, so a caller that wants
+    # to sign what it just published - or pin a deployment to it -
+    # needs the digest rather than the name it pushed under.
+    description: >-
+      List of immutable OCI references for the published charts, as
+      registry/organisation/chart@sha256:... (comma-separated)
+    value: "${{ steps.publish.outputs.published_refs }}"
 
 runs:
   using: 'composite'
@@ -143,6 +151,7 @@ runs:
 
         # Initialize variables for tracking publications
         published_files=""
+        published_refs=""
         failed_files=""
         publication_count=0
         failed_count=0
@@ -160,6 +169,7 @@ runs:
           echo 'publication_count=0' >> "$GITHUB_OUTPUT"
           echo 'failed_count=0' >> "$GITHUB_OUTPUT"
           echo 'published_files=' >> "$GITHUB_OUTPUT"
+          echo 'published_refs=' >> "$GITHUB_OUTPUT"
           echo 'failed_files=' >> "$GITHUB_OUTPUT"
           echo '## ☸️ Helm Chart Publisher' >> "$GITHUB_STEP_SUMMARY"
           echo "- **Container registry:** ${INPUTS_REGISTRY}" >> "$GITHUB_STEP_SUMMARY"
@@ -203,8 +213,17 @@ runs:
           # name (from Chart.yaml) to the target URL automatically, so
           # the URL must stop at the organisation/namespace to avoid
           # duplication (e.g. org/chart/chart)
-          if helm push "$file" \
-            "oci://${INPUTS_REGISTRY}/${INPUTS_ORGANISATION}"
+          #
+          # Captured rather than streamed: helm reports the digest of
+          # the pushed manifest on its output and that is the only
+          # place it appears. Re-resolving it afterwards would cost a
+          # second registry round-trip that could race a concurrent
+          # push to the same tag.
+          push_output=$(helm push "$file" \
+            "oci://${INPUTS_REGISTRY}/${INPUTS_ORGANISATION}" 2>&1)
+          push_status=$?
+          printf '%s\n' "$push_output"
+          if [ "$push_status" -eq 0 ]
           then
             echo "Successfully published: $file ✅"
             filename=$(basename "$file")
@@ -212,6 +231,31 @@ runs:
               published_files="$filename"
             else
               published_files="$published_files,$filename"
+            fi
+            # Both halves come from helm's own report rather than
+            # from reassembly. "Pushed:" carries the reference helm
+            # actually used, which the chart metadata cannot always
+            # reproduce: helm show chart emits YAML, so a name that
+            # YAML quotes - 123 shown as "123" - would be spliced in
+            # with its quotes and name something that was never
+            # pushed. "Digest:" then pins that reference.
+            pushed=$(printf '%s' "$push_output" | \
+              awk '/^Pushed:/ {print $2; exit}')
+            digest=$(printf '%s' "$push_output" | \
+              grep -oE 'sha256:[0-9a-f]{64}' | head -n1)
+            if [ -n "$pushed" ] && [ -n "$digest" ]; then
+              # Drop the tag from the pushed reference before pinning
+              # by digest. Trimming at the last colon leaves a
+              # registry port (localhost:5000/...) intact.
+              ref="${pushed%:*}@${digest}"
+              if [ -z "$published_refs" ]; then
+                published_refs="$ref"
+              else
+                published_refs="$published_refs,$ref"
+              fi
+              echo "Immutable reference: $ref"
+            else
+              echo "Warning: no digest reported for $file ⚠️"
             fi
             publication_count=$((publication_count + 1))
           else
@@ -238,6 +282,7 @@ runs:
 
         # Set outputs
         echo "published_files=$published_files" >> "$GITHUB_OUTPUT"
+        echo "published_refs=$published_refs" >> "$GITHUB_OUTPUT"
         echo "publication_count=$publication_count" >> "$GITHUB_OUTPUT"
         echo "failed_count=$failed_count" >> "$GITHUB_OUTPUT"
         echo "failed_files=$failed_files" >> "$GITHUB_OUTPUT"

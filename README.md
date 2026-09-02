@@ -70,14 +70,62 @@ environment setup tasks before invoking the action; below is an example:
 
 <!-- markdownlint-disable MD013 -->
 
-| Name               | Description                             |
-| ------------------ | --------------------------------------- |
-| `published_files`  | List of files published                 |
-| `failed_files`     | List of files that failed to publish    |
-| `publication_count`| Number of files published               |
-| `failed_count`     | Number of files that failed publishing  |
+| Name                | Description                                      |
+| ------------------- | ------------------------------------------------ |
+| `published_files`   | List of files published                          |
+| `published_refs`    | Immutable `registry/org/chart@sha256` references |
+| `failed_files`      | List of files that failed to publish             |
+| `publication_count` | Number of files published                        |
+| `failed_count`      | Number of files that failed publishing           |
 
 <!-- markdownlint-enable MD013 -->
+
+### Signing published charts
+
+`published_refs` reports each chart by digest rather than by tag,
+which is what a caller needs to sign the artefact or pin a deployment
+to it: a later push can overwrite a tag, so signing one binds the
+signature to whatever occupies that tag at verification time.
+
+<!-- markdownlint-disable MD046 -->
+
+```yaml
+  - name: 'Publish Helm Charts'
+    id: helm-publish
+    uses: lfreleng-actions/helm-chart-publish-action@main
+    with:
+      registry: 'ghcr.io'
+      username: "${{ github.actor }}"
+      password: "${{ github.token }}"
+      charts_path: './chartstorage'
+
+  # v4.1.2
+  - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+  - name: 'Sign published charts (keyless OIDC)'
+    # Needs `id-token: write` on the job
+    shell: bash
+    env:
+      REFS: "${{ steps.helm-publish.outputs.published_refs }}"
+      COUNT: "${{ steps.helm-publish.outputs.publication_count }}"
+    run: |
+      set -euo pipefail
+      [ "$COUNT" -gt 0 ] || exit 0
+      IFS=',' read -ra refs <<< "$REFS"
+      # The action records a chart published without a reported
+      # digest as a success by design, so signing must check the
+      # count rather than iterate whatever arrived: a short list
+      # would otherwise leave charts unsigned and still succeed.
+      if [ "${#refs[@]}" -ne "$COUNT" ]; then
+        echo "Error: ${#refs[@]} refs for $COUNT published charts"
+        exit 1
+      fi
+      for ref in "${refs[@]}"; do
+        cosign sign --yes "$ref"
+      done
+```
+
+<!-- markdownlint-enable MD046 -->
 
 ## Implementation Details
 

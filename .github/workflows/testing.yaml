@@ -98,11 +98,55 @@ jobs:
           path: "${{ needs.build.outputs.charts_build_dir }}"
 
       - uses: ./
+        id: publish
         with:
           registry: 'ghcr.io'
           username: "${{ github.actor }}"
           password: "${{ github.token }}"
           charts_path: "${{ needs.build.outputs.charts_build_dir }}"
+
+      - name: 'Verify published_refs output'
+        shell: bash
+        env:
+          REFS: "${{ steps.publish.outputs.published_refs }}"
+          COUNT: "${{ steps.publish.outputs.publication_count }}"
+        run: |
+          set -euo pipefail
+          echo "published_refs: ${REFS}"
+          if [ "${COUNT}" -eq 0 ]; then
+            echo 'Nothing published; nothing to verify ⚠️'
+            exit 0
+          fi
+          if [ -z "${REFS}" ]; then
+            echo 'Error: charts published but no refs reported ❌'
+            exit 1
+          fi
+          # Split into an array rather than piping into `while read`:
+          # a pipeline runs the loop in a subshell, so a failure
+          # inside it could not fail this step, and the final element
+          # of an unterminated stream never reaches the loop body at
+          # all - which for a single chart means verifying nothing
+          # while reporting success.
+          IFS=',' read -ra refs <<< "${REFS}"
+          if [ "${#refs[@]}" -ne "${COUNT}" ]; then
+            echo "Error: ${#refs[@]} refs for ${COUNT} charts ❌"
+            exit 1
+          fi
+          for ref in "${refs[@]}"; do
+            # Anchored, with the digest checked for exactly 64
+            # lowercase hex characters and the path restricted to the
+            # OCI character set: a glob ending in sha256:* would
+            # accept a truncated digest, and [^@]+ would accept a
+            # quoted chart name, which is the reassembly bug this
+            # output is derived to avoid.
+            pattern='^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$'
+            if [[ "${ref}" =~ $pattern ]]; then
+              echo "Valid immutable reference: ${ref} ✅"
+            else
+              echo "Error: malformed reference '${ref}' ❌"
+              exit 1
+            fi
+          done
 
   dockerhub-publish:
     name: 'Publish [DockerHub]'
