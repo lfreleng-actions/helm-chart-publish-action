@@ -9,7 +9,10 @@ name: 'Test GitHub Action 🧪'
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, edited, synchronize]
+    # 'edited' is deliberately omitted: a title or body edit leaves the
+    # head commit unchanged, so it would only rerun the same tests and
+    # cancel any run already in progress for that commit.
+    types: [opened, reopened, synchronize]
     branches: ['main']
   push:
     branches: ['main']
