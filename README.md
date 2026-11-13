@@ -112,10 +112,10 @@ signature to whatever occupies that tag at verification time.
       set -euo pipefail
       [ "$COUNT" -gt 0 ] || exit 0
       IFS=',' read -ra refs <<< "$REFS"
-      # The action records a chart published without a reported
-      # digest as a success by design, so signing must check the
-      # count rather than iterate whatever arrived: a short list
-      # would otherwise leave charts unsigned and still succeed.
+      # The action counts a chart as published once helm has
+      # reported a valid digest for it; still check the count rather
+      # than iterate whatever arrived: a short list would otherwise
+      # leave charts unsigned and still succeed.
       if [ "${#refs[@]}" -ne "$COUNT" ]; then
         echo "Error: ${#refs[@]} refs for $COUNT published charts"
         exit 1
@@ -156,3 +156,24 @@ publishes each chart to the registry using the format:
 - Publishing failures permitted when using the `permit_fail` input/option
 
 <!-- markdownlint-enable MD013 -->
+
+## Testing
+
+`tests/publish-digest.sh` runs the publish step from `action.yaml`
+against a stub `helm` for both helm v3 and helm v4 output, with
+sha256-shaped decoys on stderr and stdout, and checks that
+`published_refs` carries the digest from helm's own `Digest:` line.
+It needs `bash` and `yq`:
+
+```bash
+bash tests/publish-digest.sh
+```
+
+To also push a real chart through the installed `helm` and compare
+the published digest with the one the registry reports, point it at a
+plain-HTTP registry:
+
+```bash
+docker run -d -p 5000:5000 registry:2
+HELM_TEST_REGISTRY=localhost:5000 bash tests/publish-digest.sh
+```
