@@ -135,7 +135,7 @@ runs:
       with:
         registry: "${{ inputs.registry }}"
         username: "${{ inputs.username }}"
-        password: "${{ inputs.password }}"
+        password: ${{ inputs.password }}
 
     - name: 'Publish Helm Charts'
       id: publish
