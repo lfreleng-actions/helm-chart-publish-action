@@ -135,7 +135,7 @@ runs:
       with:
         registry: "${{ inputs.registry }}"
         username: "${{ inputs.username }}"
-        password: "${{ inputs.password }}"
+        password: ${{ inputs.password }}
 
     - name: 'Publish Helm Charts'
       id: publish
@@ -190,6 +190,24 @@ runs:
         # Collect chart files into an array to avoid subshell variable scoping issues
         readarray -d '' target_files < <(find "${INPUTS_CHARTS_PATH}" -maxdepth 1 -name '*.tgz' -print0)
 
+        # helm push writes its "Pushed:" and "Digest:" report to a
+        # different stream depending on the major version, checked
+        # against a local registry:2 with --plain-http:
+        #   helm v3.19.0 writes both lines to stderr
+        #   helm v4.3.1  writes both lines to stdout
+        # Only that stream is parsed, so nothing else on the other
+        # stream (plugins, credential helpers, debug output) can
+        # supply the digest.
+        helm_major=$(helm version --template '{{.Version}}' | \
+          sed -nE 's/^v([0-9]+)\..*/\1/p')
+        if [ "$helm_major" = '3' ]; then
+          report_stream='stderr'
+        else
+          report_stream='stdout'
+        fi
+        push_stderr_file=$(mktemp -p "${RUNNER_TEMP:-${TMPDIR:-/tmp}}")
+        trap 'rm -f "$push_stderr_file"' EXIT
+
         # Process each chart file
         for file in "${target_files[@]}"; do
           echo "Publishing chart file: $file"
@@ -219,11 +237,35 @@ runs:
           # place it appears. Re-resolving it afterwards would cost a
           # second registry round-trip that could race a concurrent
           # push to the same tag.
-          push_output=$(helm push "$file" \
-            "oci://${INPUTS_REGISTRY}/${INPUTS_ORGANISATION}" 2>&1)
+          push_stdout=$(helm push "$file" \
+            "oci://${INPUTS_REGISTRY}/${INPUTS_ORGANISATION}" \
+            2>"$push_stderr_file")
           push_status=$?
-          printf '%s\n' "$push_output"
-          if [ "$push_status" -eq 0 ]
+          push_stderr=$(cat "$push_stderr_file")
+          if [ -n "$push_stdout" ]; then
+            printf '%s\n' "$push_stdout"
+          fi
+          if [ -n "$push_stderr" ]; then
+            printf '%s\n' "$push_stderr"
+          fi
+          if [ "$report_stream" = 'stderr' ]; then
+            push_report="$push_stderr"
+          else
+            push_report="$push_stdout"
+          fi
+          # Both halves come from helm's own report rather than
+          # from reassembly. "Pushed:" carries the reference helm
+          # actually used, which the chart metadata cannot always
+          # reproduce: helm show chart emits YAML, so a name that
+          # YAML quotes - 123 shown as "123" - would be spliced in
+          # with its quotes and name something that was never
+          # pushed. "Digest:" then pins that reference.
+          pushed=$(printf '%s\n' "$push_report" | \
+            awk '/^Pushed:/ {print $2; exit}')
+          digest=$(printf '%s\n' "$push_report" | \
+            awk '/^Digest:/ {print $2; exit}')
+          if [ "$push_status" -eq 0 ] && [ -n "$pushed" ] && \
+             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           then
             echo "Successfully published: $file ✅"
             filename=$(basename "$file")
@@ -232,33 +274,22 @@ runs:
             else
               published_files="$published_files,$filename"
             fi
-            # Both halves come from helm's own report rather than
-            # from reassembly. "Pushed:" carries the reference helm
-            # actually used, which the chart metadata cannot always
-            # reproduce: helm show chart emits YAML, so a name that
-            # YAML quotes - 123 shown as "123" - would be spliced in
-            # with its quotes and name something that was never
-            # pushed. "Digest:" then pins that reference.
-            pushed=$(printf '%s' "$push_output" | \
-              awk '/^Pushed:/ {print $2; exit}')
-            digest=$(printf '%s' "$push_output" | \
-              grep -oE 'sha256:[0-9a-f]{64}' | head -n1)
-            if [ -n "$pushed" ] && [ -n "$digest" ]; then
-              # Drop the tag from the pushed reference before pinning
-              # by digest. Trimming at the last colon leaves a
-              # registry port (localhost:5000/...) intact.
-              ref="${pushed%:*}@${digest}"
-              if [ -z "$published_refs" ]; then
-                published_refs="$ref"
-              else
-                published_refs="$published_refs,$ref"
-              fi
-              echo "Immutable reference: $ref"
+            # Drop the tag from the pushed reference before pinning
+            # by digest. Trimming at the last colon leaves a
+            # registry port (localhost:5000/...) intact.
+            ref="${pushed%:*}@${digest}"
+            if [ -z "$published_refs" ]; then
+              published_refs="$ref"
             else
-              echo "Warning: no digest reported for $file ⚠️"
+              published_refs="$published_refs,$ref"
             fi
+            echo "Immutable reference: $ref"
             publication_count=$((publication_count + 1))
           else
+            if [ "$push_status" -eq 0 ]; then
+              echo "Error: helm push reported no valid Pushed:/Digest: on ${report_stream} for $file ❌"
+              echo "Expected a Digest: line matching sha256:<64 hex>, got: '${digest}'"
+            fi
             echo "Failed to publish: $file ❌"
             filename=$(basename "$file")
             if [ -z "$failed_files" ]; then
