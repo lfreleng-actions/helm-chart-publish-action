@@ -186,6 +186,9 @@ nor the step's exit status:
 bash tests/publish-metadata.sh
 ```
 
+The `Stubbed publish tests` workflow runs both scripts on every pull
+request, with no registry credentials.
+
 To also push a real chart through the installed `helm` and compare
 the published digest with the one the registry reports, point it at a
 plain-HTTP registry:
