@@ -152,7 +152,12 @@ publishes each chart to the registry using the format:
 
 - Helm version 3.7.0 or higher required for OCI registry support
 - Chart files are tarball `.tgz` files in the specified charts directory
-- Extracts the chart name from each `.tgz` file using `helm show chart`
+- Extracts the chart name from each `.tgz` file using `helm show chart`;
+  an archive whose metadata it cannot read counts as a failed file and
+  the remaining charts still publish
+- Outputs and the step summary report charts already published even
+  when an unexpected error stops the batch; the step then fails
+  regardless of `permit_fail`
 - Publishing failures permitted when using the `permit_fail` input/option
 
 <!-- markdownlint-enable MD013 -->
@@ -167,6 +172,18 @@ It needs `bash` and `yq`:
 
 ```bash
 bash tests/publish-digest.sh
+```
+
+`tests/publish-metadata.sh` runs the same step against a stub `helm`
+that cannot read one archive's metadata, first, between or after
+valid charts, and checks that the batch continues and that every
+output reports the result. It also checks that an unexpected error
+part-way through a batch still reports the charts already pushed,
+and that a failed temporary-file cleanup changes neither that report
+nor the step's exit status:
+
+```bash
+bash tests/publish-metadata.sh
 ```
 
 To also push a real chart through the installed `helm` and compare
